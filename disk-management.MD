@@ -1,0 +1,120 @@
+📦 Add & Mount an EBS Disk on an EC2 Instance (RHEL / Amazon Linux)
+This guide explains how to attach, partition, format, mount, and persist an additional EBS disk on an EC2 instance.
+
+Assumptions
+A new EBS volume is already attached to the EC2 instance.
+The new disk appears as:
+/dev/nvme1n1
+You want to mount it at:
+/data
+OS: RHEL / Amazon Linux
+Filesystem: XFS (recommended for AWS)
+1️⃣ Verify the Disk Is Visible
+lsblk
+You should see something like:
+
+nvme1n1   259:1   0   25G  0 disk
+2️⃣ Create a Partition (Non-Interactive – Automation Safe)
+sudo parted /dev/nvme1n1 --script mklabel gpt mkpart primary 0% 100%
+🔹 What this does
+--script
+Runs non-interactively (no confirmation prompts).
+Safe for automation (Ansible / Terraform / cloud-init).
+
+mklabel gpt
+Creates a GUID Partition Table.
+GPT is the modern standard (supports large disks and better reliability).
+
+mkpart primary 0% 100%
+Creates a single partition using the entire disk.
+
+After this, the new partition will appear as:
+
+/dev/nvme1n1p1
+3️⃣ Create a Filesystem (XFS – Best for AWS)
+sudo mkfs.xfs -f /dev/nvme1n1p1
+🔹 Why XFS?
+Default filesystem for RHEL
+Excellent for:
+Large files
+Logs
+High I/O workloads
+Supports online growth
+Enterprise-grade stability
+⚠️ -f forces formatting (safe only for new disks).
+
+4️⃣ Create a Mount Directory
+sudo mkdir -p /data
+5️⃣ Mount the Disk (Temporary Runtime Mount)
+sudo mount /dev/nvme1n1p1 /data
+Verify:
+
+df -hT | grep data
+Expected output:
+
+/dev/nvme1n1p1   xfs   25G   ...   /data
+6️⃣ Get the Disk UUID (Permanent Identity)
+sudo blkid /dev/nvme1n1p1
+Example output:
+
+/dev/nvme1n1p1: UUID="d68b606a-4df3-44c2-bd74-418fa36e9fa2" TYPE="xfs"
+⚠️ Never use /dev/nvme1n1p1 directly in fstab.
+Device names can change after reboot in AWS.
+
+7️⃣ Add Persistent Mount Entry (/etc/fstab)
+Open the file:
+
+sudo vim /etc/fstab
+Add this line at the bottom:
+
+UUID=d68b606a-4df3-44c2-bd74-418fa36e9fa2   /data   xfs   defaults,nofail   0   2
+8️⃣ Meaning of the fstab Line
+UUID=xxxx   /data   xfs   defaults,nofail   0   2
+Field	Meaning
+UUID=xxxx	Unique disk ID (safe, permanent)
+/data	Mount point
+xfs	Filesystem type
+defaults	Standard mount options
+nofail	Don’t break boot if disk is missing
+0	Don’t include in legacy dump backups
+2	fsck order (after root /)
+9️⃣ Test the Configuration (No Reboot Needed)
+sudo mount -a
+If there are no errors, your fstab entry is correct.
+
+Verify:
+
+df -hT | grep data
+🔁 Optional: Reboot Test (Final Safety Check)
+sudo reboot
+After reboot:
+
+df -hT | grep data
+If /data still appears → 🎉 Success!
+
+🧠 Key Production Notes
+Always mount using UUID, never device names.
+Always use nofail for EC2 data disks.
+Never store logs or DB data on the root disk.
+Always test with mount -a before reboot.
+Automate these steps using Ansible for consistency.
+🏁 Summary
+# Create partition
+sudo parted /dev/nvme1n1 --script mklabel gpt mkpart primary 0% 100%
+
+# Format disk
+sudo mkfs.xfs -f /dev/nvme1n1p1
+
+# Mount disk
+sudo mkdir -p /data
+sudo mount /dev/nvme1n1p1 /data
+
+# Get UUID
+sudo blkid /dev/nvme1n1p1
+
+# Add to fstab
+sudo vim /etc/fstab
+UUID=xxxx   /data   xfs   defaults,nofail   0   2
+
+# Test mount
+sudo mount -a
